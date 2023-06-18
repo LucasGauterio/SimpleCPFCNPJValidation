@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Validação de CPF/CNPJ</title>
+    <script>
+      //get or create the credentials at https://console.cloud.google.com/apis/credentials
+      const API_KEY = "API_KEY";
+      const CLIENT_ID = "CLIENT_ID";
+      const DISCOVERY_DOC =
+        "https://sheets.googleapis.com/$discovery/rest?version=v4";
+      const SCOPES = "https://www.googleapis.com/auth/drive.metadata.readonly";
+      //https://docs.google.com/spreadsheets/d/[EXTRACT SHEET ID FROM HERE]/edit#gid=0
+      const SHEET_ID = "SHEET_ID";
+
+      loadGoogleScripts();
+
+      function validateCPF(cpf) {
+        cpf = cpf.replace(/[^\d]+/g, "");
+
+        if (cpf.length !== 11) {
+          return false;
+        }
+
+        if (/^(\d)\1+$/.test(cpf)) {
+          return false;
+        }
+
+        let sum = 0;
+        for (let i = 0; i < 9; i++) {
+          sum += parseInt(cpf.charAt(i)) * (10 - i);
+        }
+        let mod = 11 - (sum % 11);
+        let verifierDigit = mod === 10 || mod === 11 ? 0 : mod;
+        if (verifierDigit !== parseInt(cpf.charAt(9))) {
+          return false;
+        }
+
+        sum = 0;
+        for (let i = 0; i < 10; i++) {
+          sum += parseInt(cpf.charAt(i)) * (11 - i);
+        }
+        mod = 11 - (sum % 11);
+        verifierDigit = mod === 10 || mod === 11 ? 0 : mod;
+        if (verifierDigit !== parseInt(cpf.charAt(10))) {
+          return false;
+        }
+
+        return true;
+      }
+
+      function validateCNPJ(cnpj) {
+        cnpj = cnpj.replace(/[^\d]+/g, "");
+
+        if (cnpj.length !== 14) {
+          return false;
+        }
+
+        if (/^(\d)\1+$/.test(cnpj)) {
+          return false;
+        }
+
+        let size = cnpj.length - 2;
+        let numbers = cnpj.substring(0, size);
+        let digits = cnpj.substring(size);
+        let sum = 0;
+        let pos = size - 7;
+        for (let i = size; i >= 1; i--) {
+          sum += parseInt(numbers.charAt(size - i)) * pos--;
+          if (pos < 2) {
+            pos = 9;
+          }
+        }
+        let result = sum % 11 < 2 ? 0 : 11 - (sum % 11);
+        if (result !== parseInt(digits.charAt(0))) {
+          return false;
+        }
+
+        size = size + 1;
+        numbers = cnpj.substring(0, size);
+        sum = 0;
+        pos = size - 7;
+        for (let i = size; i >= 1; i--) {
+          sum += parseInt(numbers.charAt(size - i)) * pos--;
+          if (pos < 2) {
+            pos = 9;
+          }
+        }
+        result = sum % 11 < 2 ? 0 : 11 - (sum % 11);
+        if (result !== parseInt(digits.charAt(1))) {
+          return false;
+        }
+
+        return true;
+      }
+
+      function formatCPF_CNPJ(value, type) {
+        value = value.replace(/\D/g, "");
+
+        if (type === "cpf") {
+          value = value.slice(0, 11);
+          value = value.replace(/(\d{3})(\d)/, "$1.$2");
+          value = value.replace(/(\d{3})(\d)/, "$1.$2");
+          value = value.replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+        } else if (type === "cnpj") {
+          value = value.slice(0, 14);
+          value = value.replace(/(\d{2})(\d)/, "$1.$2");
+          value = value.replace(/(\d{3})(\d)/, "$1.$2");
+          value = value.replace(/(\d{3})(\d)/, "$1/$2");
+          value = value.replace(/(\d{4})(\d{1,2})$/, "$1-$2");
+        }
+        return value;
+      }
+
+      function mask() {
+        var cpfCnpjInput = document.getElementById("cpf_cnpj");
+        var value = cpfCnpjInput.value;
+        var type = getType();
+
+        cpfCnpjInput.value = formatCPF_CNPJ(value, type);
+      }
+
+      function validate(omitPrompt) {
+        var cpfCnpjInput = document.getElementById("cpf_cnpj");
+        var value = cpfCnpjInput.value.replace(/\D/g, "");
+        var type = getType();
+
+        var valido = false;
+        if (type === "cpf") {
+          valido = validateCPF(value);
+        } else if (type === "cnpj") {
+          valido = validateCNPJ(value);
+        }
+
+        if (valido) {
+          if(!omitPrompt)
+            alert(type.toUpperCase() + " válido!");
+        } else {
+          alert(type.toUpperCase() + " inválido!");
+        }
+        return valido;
+      }
+
+      function getType() {
+        var typeInput = document.getElementById("type");
+        return typeInput.value;
+      }
+
+      function getDocument() {
+        var cpfCnpjInput = document.getElementById("cpf_cnpj");
+        return cpfCnpjInput.value;
+      }
+
+      function salvar() {
+        if (validate(true)) {
+          var type = getType();
+          var column = type === "cpf" ? "Sheet1!A1" : "Sheet2!A1";
+          sendToSheets(SHEET_ID, column, getDocument());
+        }
+      }
+
+      async function sendToSheets(sheetId, column, value) {
+        var rowCount = await getRowCount(sheetId, column);
+
+        var nextCell = "Sheet1!A"+(rowCount+1);
+        console.log(nextCell);
+        var params = {
+          spreadsheetId: sheetId,
+          range: nextCell,
+          valueInputOption: "USER_ENTERED",
+        };
+        var value = getDocument();
+        var valueRangeBody = {
+          values: [[value]],
+        };
+
+        var request = gapi.client.sheets.spreadsheets.values.update(
+          params,
+          valueRangeBody
+        );
+        request.then(
+          function (response) {
+            console.log("value salvo com sucesso!");
+          },
+          function (reason) {
+            console.error(
+              "Erro ao salvar o value: " + reason.result.error.message
+            );
+          }
+        );
+      }
+
+      async function getRowCount(sheetId, column) {
+        var params = {
+          spreadsheetId: sheetId,
+          range: column+":A65000"
+        };
+
+        var response = await gapi.client.sheets.spreadsheets.values.get(params);
+        return response.result.values.length;
+      }
+
+      async function askPermission() {
+        if (this.bGisLoaded && this.bGapiLoaded) {
+          let accessToken = localStorage.getItem("accessToken");
+          if (accessToken) {
+            gapi.client.setToken(accessToken);
+          }
+          if (gapi.client.getToken() === null) {
+            // Prompt the user to select a Google Account and ask for consent to share their data
+            // when establishing a new session.
+            this.tokenClient.requestAccessToken({ prompt: "consent" });
+          } else {
+            // Skip display of account chooser and consent dialog for an existing session.
+            this.tokenClient.requestAccessToken({ prompt: "" });
+          }
+        }
+      }
+
+      var bGapiLoaded = false;
+      function gapiLoaded() {
+        gapi.load("client", async () => {
+          await gapi.client.init({
+            apiKey: API_KEY,
+            discoveryDocs: [DISCOVERY_DOC],
+          });
+          bGapiLoaded = true;
+          askPermission();
+        });
+      }
+
+      async function authCallback(resp) {
+        if (resp.error !== undefined) {
+          throw resp;
+        }
+
+        localStorage.setItem("accessToken", resp.access_token);
+      }
+
+      var bGisLoaded = false;
+      var tokenClient = null;
+      function gisLoaded() {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: authCallback,
+        });
+        bGisLoaded = true;
+        askPermission();
+      }
+
+      function loadGoogleScripts() {
+        var scripts = [
+          {
+            src: "https://apis.google.com/js/api.js",
+            onload: gapiLoaded,
+          },
+          {
+            src: "https://accounts.google.com/gsi/client",
+            onload: gisLoaded,
+          },
+        ];
+        scripts.forEach((script) => {
+          let tag = document.createElement("script");
+          tag.setAttribute("src", script.src);
+          tag.onload = script.onload;
+          tag.async = true;
+          tag.defer = true;
+          document.head.appendChild(tag);
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <h1>Validação de CPF/CNPJ</h1>
+    <select id="type" onchange="mask()">
+      <option value="cpf">CPF</option>
+      <option value="cnpj">CNPJ</option>
+    </select>
+    <input
+      type="text"
+      id="cpf_cnpj"
+      placeholder="Digite o CPF ou CNPJ"
+      oninput="mask()"
+      maxlength="18"
+    />
+    <button onclick="validate(false)">validate</button>
+    <button onclick="salvar()">Enviar</button>
+  </body>
+</html>
